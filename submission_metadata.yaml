@@ -21,7 +21,7 @@ team_members:
 # ============================================================================
 github_repo: "https://github.com/vasudha-star/redrob-ranker"
 
-sandbox_link: "https://colab.research.google.com/YOUR_LINK"
+sandbox_link: "https://colab.research.google.com/drive/1bnLf3XJvFXUpnNCERBbWgsI90Dfbm5DC?usp=sharing"
 # ⚠️  Replace YOUR_LINK with your actual Colab notebook URL before submitting.
 # The sandbox must demonstrate the current pipeline running on sample_candidates.json.
 
