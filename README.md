@@ -1,6 +1,61 @@
-# Intelligent Candidate Ranking System — Redrob AI Hackathon
+<div align="center">
 
-A production-ready candidate ranking pipeline that scores 100,000 profiles against a Senior AI Engineer job description and surfaces the top 100 best-fit candidates, each with a fact-grounded explanation. The ranking pipeline runs entirely on CPU and completes in approximately two minutes after one-time embedding precomputation.
+# Intelligent Candidate Ranking System
+
+### Redrob AI Hackathon — Intelligent Candidate Discovery & Ranking Challenge
+
+*A multi-signal candidate ranking pipeline combining structured rule-based scoring, semantic embedding retrieval, and lexical TF-IDF matching, fused via Weighted Reciprocal Rank Fusion.*
+
+![Python](https://img.shields.io/badge/Python-3.12-blue?style=flat-square&logo=python&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-1.26.4-013243?style=flat-square&logo=numpy&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.5.2-F7931E?style=flat-square&logo=scikit-learn&logoColor=white)
+![Sentence Transformers](https://img.shields.io/badge/Sentence_Transformers-5.5.1-yellow?style=flat-square)
+![Ranking](https://img.shields.io/badge/Fusion-Weighted_RRF-green?style=flat-square)
+![IR](https://img.shields.io/badge/Domain-Information_Retrieval-lightgrey?style=flat-square)
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Project Snapshot](#project-snapshot)
+- [Executive Summary](#executive-summary)
+- [Challenge Understanding](#challenge-understanding)
+- [Design Principles](#design-principles)
+- [Technology Stack](#technology-stack)
+- [System Architecture](#system-architecture)
+- [Ranking Pipeline](#ranking-pipeline)
+- [Feature Engineering](#feature-engineering)
+- [Honeypot Detection](#honeypot-detection)
+- [Why Weighted Reciprocal Rank Fusion](#why-weighted-reciprocal-rank-fusion)
+- [AI Components](#ai-components)
+- [Dataset Analysis and Findings](#dataset-analysis-and-findings)
+- [Weight Derivation Methodology](#weight-derivation-methodology)
+- [Validation and Evaluation](#validation-and-evaluation)
+- [Reproducibility](#reproducibility)
+- [Repository Structure](#repository-structure)
+- [Limitations](#limitations)
+- [Future Improvements](#future-improvements)
+- [Technical Decisions and Tradeoffs](#technical-decisions-and-tradeoffs)
+- [Conclusion](#conclusion)
+
+---
+
+## Project Snapshot
+
+| Metric | Value |
+|---|---|
+| Candidates processed | 100,000 |
+| Valid candidates (pass integrity checks) | 67,889 |
+| Honeypots removed | 32,111 (32.1%) |
+| Ranking method | Weighted Reciprocal Rank Fusion |
+| Signals fused | Rule engine · Embeddings · TF-IDF |
+| Embedding model | all-MiniLM-L6-v2 (384-dim) |
+| Embedding precomputation | ~80 minutes, one-time |
+| Ranking runtime | ~110 seconds |
+| Output | Top 100 candidates with fact-grounded reasoning |
+| Execution constraints | CPU-only · no network during ranking |
 
 ---
 
@@ -42,57 +97,71 @@ The system was built around five principles that shaped every engineering decisi
 
 ---
 
+## Technology Stack
+
+| Area | Technology | Version |
+|---|---|---|
+| Language | Python | 3.12 |
+| Embedding model | Sentence Transformers (`all-MiniLM-L6-v2`) | 5.5.1 |
+| Vector similarity | Cosine similarity via NumPy dot product | — |
+| Lexical retrieval | TF-IDF (`sklearn.TfidfVectorizer`) | — |
+| Rank fusion | Weighted Reciprocal Rank Fusion | k=60 |
+| Numerical computing | NumPy | 1.26.4 |
+| ML utilities | scikit-learn | 1.5.2 |
+| Date parsing | python-dateutil | 2.9.0 |
+
+---
+
 ## System Architecture
 
 ```
-                     candidates.jsonl (100,000 records)
-                                   │
-                                   ▼
-                        ┌─────────────────────┐
-                        │   Honeypot Filter    │
-                        │   (src/honeypot.py)  │
-                        │   8 integrity checks  │
-                        │   fail → score=0.001  │
-                        └──────────┬───────────┘
-                                                 ┌────────────────────┼────────────────────┐
-              ▼                    ▼                    ▼
-     ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-     │   Rule Engine    │  │   Embeddings     │  │     TF-IDF        │
-     │                  │  │                  │  │                   │
-     │ 11 structured    │  │ all-MiniLM-L6-v2 │  │ sklearn vectorizer│
-     │ features from    │  │ pre-computed     │  │ 5000 features     │
-     │ verified fields  │  │ candidate vecs   │  │ (1,2)-grams       │
-     │                  │  │ + fresh JD vec   │  │ sublinear_tf      │
-     │ × behavioral     │  │                  │  │                   │
-     │   multiplier     │  │                  │  │                   │
-     │ × notice penalty │  │                  │  │                   │
-     └────────┬─────────┘  └───────┬──────────┘  └──────┬───────────┘
-              │                    │                     │
-              │ rule_scores[]      │ embedding_scores[]  │ tfidf_scores[]
-              └────────────────────┼─────────────────────┘
-                                   ▼
-                        ┌─────────────────────┐
-                        │   Weighted RRF        │
-                        │                       │
-                        │  rule    weight=0.50  │
-                        │  embed   weight=0.30  │
-                        │  tfidf   weight=0.20  │
-                        │  k=60 (Cormack 2009)  │
-                        └──────────┬────────────┘
-                                   │
-                                   ▼
-                        ┌─────────────────────┐
-                        │  Reasoning Generator  │
-                        │  (src/reasoning.py)   │
-                        │  fact-grounded only   │
-                        │  rank-band templates  │
-                        └──────────┬────────────┘
-                                   │
-                                   ▼
-                            submission.csv
-                         (candidate_id, rank,
-                          score, reasoning)
+candidates.jsonl (100,000 records)
+        │
+        ▼
+┌───────────────────────┐
+│    Honeypot Filter     │   8 integrity checks
+│    src/honeypot.py     │   fail → score = 0.001, excluded from all rankings
+└──────────┬────────────┘
+           │
+     ┌─────┴──────┬──────────────┐
+     ▼            ▼              ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐
+│   Rule    │ │Embeddings│ │  TF-IDF  │
+│  Engine   │ │          │ │          │
+│           │ │MiniLM    │ │sklearn   │
+│ 11 feats  │ │L6-v2     │ │5000 feat │
+│ verified  │ │pre-comp  │ │(1,2)-gram│
+│ fields    │ │candidate │ │sublinear │
+│           │ │vecs +    │ │    tf    │
+│ × behav.  │ │fresh JD  │ │          │
+│   mult.   │ │   vec    │ │          │
+│ × notice  │ │          │ │          │
+└─────┬─────┘ └─────┬────┘ └─────┬────┘
+      │             │             │
+      │ rule_scores │embed_scores │tfidf_scores
+      └─────────────┼─────────────┘
+                    ▼
+        ┌───────────────────────┐
+        │    Weighted RRF        │
+        │                        │
+        │  rule    weight = 0.50 │
+        │  embed   weight = 0.30 │
+        │  tfidf   weight = 0.20 │
+        │  k = 60 (Cormack 2009) │
+        └──────────┬────────────┘
+                   ▼
+        ┌───────────────────────┐
+        │   Reasoning Generator  │
+        │   src/reasoning.py     │
+        │   fact-grounded only   │
+        │   rank-band templates  │
+        └──────────┬────────────┘
+                   ▼
+            submission.csv
+        (candidate_id, rank, score, reasoning)
 ```
+
+> **Note on signal independence.** The three signals are computed in parallel and never share intermediate state. Each sees the same candidate data but reads different representations of it — structured fields, embedded narrative, and raw term frequencies. Independence is a deliberate design choice: when signals agree on a candidate's position, the agreement is more reliable than any single signal could be on its own.
 
 ---
 
@@ -134,7 +203,7 @@ The system was built around five principles that shaped every engineering decisi
 
 ### Stage 5 — Weighted Reciprocal Rank Fusion
 
-The three signals are combined using Weighted RRF. See the dedicated section below.
+The three signals are combined using Weighted RRF. See the [dedicated section](#why-weighted-reciprocal-rank-fusion) below.
 
 ### Stage 6 — Reasoning generation
 
@@ -144,7 +213,7 @@ The three signals are combined using Weighted RRF. See the dedicated section bel
 
 ## Feature Engineering
 
-All eleven features are normalized to 0.0–1.0 and combined using the weights in `src/scorer.py`.
+All eleven features are normalized to `[0.0, 1.0]` and combined using the weights defined in `src/scorer.py`.
 
 | Feature | Weight | What it measures |
 |---|---|---|
@@ -158,7 +227,7 @@ All eleven features are normalized to 0.0–1.0 and combined using the weights i
 | `skill_description_consistency` | 0.05 | Whether high-proficiency claimed skills appear in descriptions |
 | `github_activity` | 0.04 | Linked GitHub engagement score |
 | `location` | 0.04 | Geographic fit with JD's India preference |
-| `education` | 0.00 | Institutional tier (present in code, zeroed — see Weight Derivation) |
+| `education` | 0.00 | Institutional tier (present in code, zeroed — see [Weight Derivation](#weight-derivation-methodology)) |
 
 ### Retrieval evidence (weight 0.28)
 
@@ -170,7 +239,7 @@ Classifies each job in career history as services or product using two independe
 
 ### Title domain score (weight 0.12)
 
-Checks the current job title against curated TECH_TITLES and NON_TECH_TITLES sets. Directly JD-relevant titles (ML engineer, AI engineer, NLP engineer, search engineer, recommendation engineer) return 1.0. General technical titles return 0.6. Non-technical titles return 0.1. Unknown titles return 0.4. No candidate is completely eliminated by title alone — career evidence may compensate.
+Checks the current job title against curated `TECH_TITLES` and `NON_TECH_TITLES` sets. Directly JD-relevant titles (ML engineer, AI engineer, NLP engineer, search engineer, recommendation engineer) return 1.0. General technical titles return 0.6. Non-technical titles return 0.1. Unknown titles return 0.4. No candidate is completely eliminated by title alone — career evidence may compensate.
 
 ### Skill credibility score (weight 0.09)
 
@@ -186,7 +255,16 @@ Reads descriptions for evidence of rigorous evaluation methodology: NDCG, MRR, M
 
 ### Experience fit score (weight 0.07)
 
-Maps years of experience to the JD's 5–9 year target with graceful degradation. Sweet spot (5–9 years): 1.0. Slightly junior (3–5): 0.75. Slightly senior (9–12): 0.85. More senior (12–15): 0.65. Very junior (under 3): 0.40. Very senior (15+): 0.50.
+Maps years of experience to the JD's 5–9 year target with graceful degradation.
+
+| Years of experience | Score |
+|---|---|
+| 5 – 9 (target range) | 1.00 |
+| 9 – 12 (slightly senior) | 0.85 |
+| 3 – 5 (slightly junior) | 0.75 |
+| 12 – 15 (senior) | 0.65 |
+| 15+ (very senior) | 0.50 |
+| Under 3 (very junior) | 0.40 |
 
 ### Skill description consistency score (weight 0.05)
 
@@ -194,11 +272,25 @@ Checks whether skills claimed at advanced or expert proficiency with over six mo
 
 ### GitHub activity score (weight 0.04)
 
-Score of -1 (no GitHub linked) returns 0.4 (neutral). Scores 70+ return 1.0. Scores 30–70 scale linearly between 0.6 and 1.0. Scores below 30 scale between 0.3 and 0.6. Weighted low because junior developers can have high scores too — this is a credibility signal, not a domain signal.
+| GitHub score | Feature value |
+|---|---|
+| -1 (no account linked) | 0.40 (neutral) |
+| 70 – 100 | 1.00 |
+| 30 – 70 | Linear scale 0.60 – 1.00 |
+| 0 – 30 | Linear scale 0.30 – 0.60 |
+
+Weighted low because this is a credibility signal, not a domain signal — junior and senior engineers alike can have high GitHub activity scores.
 
 ### Location score (weight 0.04)
 
-India, preferred city: 1.0. India, other city: 0.85. Outside India, willing to relocate: 0.5. Outside India, not willing to relocate: 0.2. The JD says India preferred, outside India case-by-case with no visa sponsorship — this encodes that as a soft preference, not a hard filter.
+| Candidate location | Score |
+|---|---|
+| India, preferred city | 1.00 |
+| India, other city | 0.85 |
+| Outside India, willing to relocate | 0.50 |
+| Outside India, not willing to relocate | 0.20 |
+
+The JD states India preferred, outside India case-by-case with no visa sponsorship — this encodes that as a soft preference, not a hard filter, consistent with the JD's explicit language.
 
 ### Education score (weight 0.00)
 
@@ -210,34 +302,33 @@ Tier 1: 1.0, Tier 2: 0.75, Tier 3: 0.5, Tier 4 and unknown: 0.3. Weight is zero 
 
 The dataset contains honeypot profiles with internally inconsistent or fabricated data, designed to trap naive ranking systems. Honeypot detection runs before any relevance scoring. A candidate that fails any check is assigned a score of 0.001 and excluded from all three RRF ranked lists — no feature extraction, embedding lookup, or TF-IDF comparison is performed for detected honeypots.
 
-The eight checks run in order of computational cost — cheapest first:
+> The eight checks run in order of computational cost — cheapest first — so the most common failure modes are caught before the more expensive checks are evaluated.
 
-1. **Inverted salary** — expected salary minimum exceeds maximum. Logically impossible.
-2. **Impossible timeline** — platform signup date falls after last active date. Logically impossible.
-3. **Fabricated expertise** — two or more skills claimed at expert proficiency with under six months of usage duration.
-4. **Impossible skill duration** — any skill's claimed duration exceeds total years of experience plus a twelve-month tolerance buffer for concurrent roles.
-5. **Experience inflation** — total career history duration exceeds stated years of experience by more than three years.
-6. **Future job start date** — a current job's recorded start date is after the reference date (June 14, 2026).
-7. **Endorsement velocity** — total endorsements divided by days on platform exceeds ten per day, which is not achievable organically.
-8. **Education timeline** — an education record's end year precedes its start year, or extends past 2026.
+| # | Rule | Description |
+|---|---|---|
+| 1 | Inverted salary | Expected salary minimum exceeds maximum. Logically impossible. |
+| 2 | Impossible timeline | Platform signup date falls after last active date. Logically impossible. |
+| 3 | Fabricated expertise | Two or more skills claimed at expert proficiency with under six months of usage duration. |
+| 4 | Impossible skill duration | Any skill's claimed duration exceeds total years of experience plus a twelve-month tolerance buffer. |
+| 5 | Experience inflation | Total career history duration exceeds stated years of experience by more than three years. |
+| 6 | Future job start date | A current job's recorded start date is after the reference date (June 14, 2026). |
+| 7 | Endorsement velocity | Total endorsements divided by days on platform exceeds ten per day. |
+| 8 | Education timeline | An education record's end year precedes its start year, or extends past 2026. |
 
 ### Verified breakdown across 100,000 candidates
 
-```
-Rule                             Failures       %
-------------------------------------------------
-1 — inverted salary               18,865    18.9%
-2 — impossible timeline            7,496     7.5%
-3 — fabricated expertise              21     0.0%
-4 — impossible skill duration      9,231     9.2%
-5 — experience inflation              22     0.0%
-6 — future start date                  0     0.0%
-7 — endorsement velocity               0     0.0%
-8 — education timeline                 0     0.0%
-------------------------------------------------
-TOTAL flagged (any rule)          32,111    32.1%
-Valid (pass all rules)            67,889    67.9%
-```
+| Rule | Failures | % of total |
+|---|---|---|
+| 1 — Inverted salary | 18,865 | 18.9% |
+| 2 — Impossible timeline | 7,496 | 7.5% |
+| 3 — Fabricated expertise | 21 | 0.0% |
+| 4 — Impossible skill duration | 9,231 | 9.2% |
+| 5 — Experience inflation | 22 | 0.0% |
+| 6 — Future start date | 0 | 0.0% |
+| 7 — Endorsement velocity | 0 | 0.0% |
+| 8 — Education timeline | 0 | 0.0% |
+| **Total flagged** | **32,111** | **32.1%** |
+| **Valid (pass all rules)** | **67,889** | **67.9%** |
 
 The 32.1% flagged rate reflects systematic data generation artifacts in the synthetic dataset rather than intentional deception in every case. Inverted salary ranges (18.9%) and skill durations assigned independently of career history (9.2%) are structural properties of the generator. All eight checks are logically sound — inverted salary has no legitimate explanation, impossible timelines are binary logical failures, and skill duration allows a twelve-month buffer for concurrent roles. None of the 32,111 flagged candidates appear in the final top 100.
 
@@ -249,15 +340,15 @@ The 32.1% flagged rate reflects systematic data generation artifacts in the synt
 
 The three signals produce scores in fundamentally different numeric ranges:
 
-```
-Rule scores:       0.08 – 0.72   (wide, structured, reliable)
-Embedding scores:  0.20 – 0.42   (narrow, semantic, partially template-degraded)
-TF-IDF scores:     0.01 – 0.18   (sparse, lexical, lowest magnitude)
-```
+| Signal | Score range | Characteristics |
+|---|---|---|
+| Rule scores | 0.08 – 0.72 | Wide, structured, reliable |
+| Embedding scores | 0.20 – 0.42 | Narrow, semantic, partially template-degraded |
+| TF-IDF scores | 0.01 – 0.18 | Sparse, lexical, lowest magnitude |
 
 A naive weighted linear combination is broken by this distribution. A TF-IDF score change from 0.04 to 0.12 (a 3× increase, genuinely meaningful) contributes only `0.15 × 0.08 = 0.012` to the final score when weighted at 15%. The TF-IDF signal is effectively disabled regardless of its nominal weight.
 
-### The formula
+### Formula
 
 ```
 RRF(candidate) = Σᵢ  wᵢ / (k + rankᵢ(candidate))
@@ -270,7 +361,7 @@ where:
   k           = 60   (Cormack et al. 2009 — not tuned)
 ```
 
-Rank-based fusion converts each signal's raw scores to rank positions before combining, making the fusion scale-invariant by construction. k=60 controls rank decay sharpness and was not tuned — the paper's validated default is used to avoid introducing a fitting parameter.
+Rank-based fusion converts each signal's raw scores to rank positions before combining, making the fusion scale-invariant by construction. `k=60` controls rank decay sharpness and was not tuned — the paper's validated default is used to avoid introducing a fitting parameter.
 
 ### Why weighted rather than equal-weight
 
@@ -293,6 +384,8 @@ Weighted RRF (0.50 / 0.30 / 0.20):
   A = 0.50/110 + 0.30/2060 + 0.20/560 = 0.005048
   B = 0.50/860 + 0.30/120  + 0.20/140 = 0.004510  ← A correctly ranks higher
 ```
+
+Candidate A has strong structural JD fit — the profile of an ML engineer at a product company with the right experience range. Candidate B has a better-written description. Weighted RRF correctly prioritizes structural fit over narrative polish.
 
 ---
 
@@ -336,30 +429,19 @@ No relevance judgments were provided. Training a learning-to-rank model on the a
 
 Weights are JD-derived priors, not fitted parameters. Each JD requirement was mapped to the feature that captures it most directly, then ordered by how explicitly the JD discusses that requirement:
 
-```
-Tier 1 — JD's hard requirements, named with explicit disqualifiers
-  retrieval_evidence (0.28)    "Production experience with embedding-based retrieval"
-  product_company    (0.15)    "People who've only worked at consulting firms...
-                                we've had bad fit experiences"
-
-Tier 2 — Strong supporting technical signals
-  title_domain       (0.12)    "A Marketing Manager with AI keywords is a trap"
-  evaluation_framework(0.08)   "If you've never thought about how to evaluate
-                                a ranking system rigorously, this role will be
-                                very painful"
-  skill_credibility  (0.09)    Platform-verified assessment scores
-  experience_fit     (0.07)    "5-9 years" explicitly stated
-
-Tier 3 — Secondary signals with lower JD emphasis
-  company_prestige   (0.08)    Implicit in product vs. services preference
-  skill_description  (0.05)    Anti-stuffing defense
-    consistency
-  github_activity    (0.04)    Credibility signal, not domain signal
-  location           (0.04)    "Pune/Noida preferred", "outside India case-by-case"
-
-Tier 4 — Present but not evidenced by JD
-  education          (0.00)    JD never mentions institutional pedigree
-```
+| Tier | Feature | Weight | JD justification |
+|---|---|---|---|
+| 1 | `retrieval_evidence` | 0.28 | *"Production experience with embedding-based retrieval"* — opening requirement |
+| 1 | `product_company` | 0.15 | *"People who've only worked at consulting firms... we've had bad fit experiences"* |
+| 2 | `title_domain` | 0.12 | *"A Marketing Manager with AI keywords is a trap"* |
+| 2 | `skill_credibility` | 0.09 | Platform-verified assessment scores — only externally validated signal |
+| 2 | `evaluation_framework` | 0.08 | *"If you've never thought about how to evaluate a ranking system rigorously, this role will be very painful"* |
+| 2 | `experience_fit` | 0.07 | *"5-9 years"* explicitly stated |
+| 3 | `company_prestige` | 0.08 | Implicit in product vs. services preference |
+| 3 | `skill_description_consistency` | 0.05 | Anti-stuffing defense |
+| 3 | `github_activity` | 0.04 | Credibility signal, not domain signal |
+| 3 | `location` | 0.04 | *"Pune/Noida preferred"*, *"outside India case-by-case"* |
+| 4 | `education` | 0.00 | JD never mentions institutional pedigree |
 
 ### Validation without labels
 
@@ -371,19 +453,19 @@ Weights were validated against a 50-candidate proxy sample: the known-relevant c
 
 The system was validated across five dimensions before submission:
 
-**Submission format validation** — `validate_submission.py` (provided by organizers) confirms exactly 100 data rows, correct column names, ranks 1–100 each used exactly once, scores non-increasing with rank, and ties broken by candidate ID ascending.
-
-**Honeypot containment** — confirmed zero honeypots in the top 100 by checking that no submitted candidate has a score at the 0.001 floor. Additionally verified that known honeypot patterns (inverted salary, impossible timelines) are not present in any top-100 profile.
-
-**Non-technical title exclusion** — confirmed that no clearly non-technical titles (marketing manager, HR manager, accountant, civil engineer) appear in the top 20.
-
-**Proxy relevance validation** — `calibrate.py` tests that proposed weight changes preserve the known-relevant candidate at rank 1 in the 50-candidate sample and do not introduce non-technical candidates into the top 10. Used before each weight adjustment to detect regressions.
-
-**Reasoning quality inspection** — sampled reasoning rows to confirm that each explanation references actual profile data, that candidate-specific retrieval technology evidence varies across candidates rather than repeating a fixed phrase, and that the concern flags (notice period, location, response rate) correctly surface when those signals are present.
+| Dimension | Method | Tool |
+|---|---|---|
+| Submission format | Header, row count, rank uniqueness, score ordering, tie-breaking | `validate_submission.py` |
+| Honeypot containment | Zero candidates with score at 0.001 floor in top 100 | Manual inspection |
+| Non-technical exclusion | No non-technical titles in top 20 | `inspect_full.py` |
+| Proxy relevance | Known-relevant candidate at rank 1; no non-technical titles in top 10 | `calibrate.py` |
+| Reasoning quality | Candidate-specific evidence varies; concern flags surface correctly | `check_reasoning.py` |
 
 ---
 
 ## Reproducibility
+
+> The ranking pipeline produces identical output on every run given identical input. No runtime randomness, no `datetime.now()` calls in scoring logic, and a deterministic sort key (`-round(score, 6), candidate_id`) ensure full reproducibility.
 
 ### Step 1 — Install dependencies
 
@@ -391,7 +473,9 @@ The system was validated across five dimensions before submission:
 pip install -r requirements.txt
 ```
 
-### Step 2 — Precompute candidate embeddings (one-time, ~80 minutes on CPU)
+### Step 2 — Precompute candidate embeddings
+
+**One-time. Approximately 80 minutes on CPU.**
 
 ```bash
 python precompute.py --candidates data/candidates.jsonl
@@ -399,13 +483,15 @@ python precompute.py --candidates data/candidates.jsonl
 
 On a fresh machine, this step downloads and caches the `all-MiniLM-L6-v2` model (22MB) from HuggingFace on first run, then encodes all 100,000 candidates and saves `data/candidate_embeddings.npy` and `data/candidate_ids.npy`. On subsequent runs, the model is read from local cache. This step only needs to be run once, or again if the candidate pool changes.
 
-### Step 3 — Run the ranker (~3–4 minutes on CPU)
+### Step 3 — Run the ranker
+
+**Approximately 110 seconds on CPU. No network access required.**
 
 ```bash
 python rank.py --candidates data/candidates.jsonl --out submission.csv
 ```
 
-After precomputation, the ranking step loads pre-computed embeddings from disk, fits TF-IDF, runs the rule engine, applies Weighted RRF, generates reasoning, and writes `submission.csv`. The model is read from local cache — no network access is made during ranking.
+After precomputation, the ranking step loads pre-computed embeddings from disk, fits TF-IDF, runs the rule engine, applies Weighted RRF, generates reasoning, and writes `submission.csv`. The model is read from local cache.
 
 ### Step 4 — Validate the submission
 
@@ -415,11 +501,11 @@ python validate_submission.py submission.csv
 
 Expected output: `Submission is valid.`
 
-### Expected runtimes
+### Runtime breakdown
 
-| Stage | Time |
+| Stage | Runtime |
 |---|---|
-| Precomputation (one-time) | ~80 minutes on CPU |
+| Precomputation (one-time) | ~80 minutes |
 | Candidate loading | ~9 seconds |
 | Embedding scores (load from disk + JD encoding) | ~2 seconds |
 | TF-IDF fitting and similarity | ~55 seconds |
@@ -429,32 +515,34 @@ Expected output: `Submission is valid.`
 
 ---
 
-## Project Structure
+## Repository Structure
 
 ```
 redrob-ranker/
-├── rank.py                  Main entry point. Orchestrates all six pipeline stages.
-├── precompute.py            One-time embedding precomputation for all candidates.
-├── calibrate.py             Proxy weight validation on the 50-candidate sample.
+│
+├── rank.py                      Main entry point. Orchestrates all six pipeline stages.
+├── precompute.py                One-time embedding precomputation for all candidates.
+├── calibrate.py                 Proxy weight validation on the 50-candidate sample.
 │
 ├── src/
-│   ├── features.py          11 structured feature functions.
-│   ├── scorer.py            Feature combination, behavioral multiplier, notice penalty.
-│   ├── honeypot.py          8 integrity checks before any relevance scoring.
-│   ├── embeddings.py        Sentence-transformer encoding and similarity computation.
-│   └── reasoning.py         Fact-grounded reasoning generation for top 100.
+│   ├── __init__.py
+│   ├── features.py              11 structured feature functions. Returns feature dict.
+│   ├── scorer.py                Feature combination, behavioral multiplier, notice penalty.
+│   ├── honeypot.py              8 integrity checks. Runs before any relevance scoring.
+│   ├── embeddings.py            Sentence-transformer encoding and similarity computation.
+│   └── reasoning.py             Fact-grounded reasoning generation for top 100 candidates.
 │
 ├── data/
-│   ├── candidates.jsonl         100,000-candidate pool (not committed — too large)
-│   ├── sample_candidates.json   First 50 candidates for local inspection
-│   ├── candidate_embeddings.npy Pre-computed candidate vectors (from precompute.py)
-│   └── candidate_ids.npy        Corresponding candidate IDs
+│   ├── candidates.jsonl         100,000-candidate pool (not committed — 465MB)
+│   ├── sample_candidates.json   First 50 candidates for sandbox and local inspection
+│   ├── candidate_embeddings.npy Pre-computed candidate vectors (output of precompute.py)
+│   └── candidate_ids.npy        Candidate ID array aligned to embeddings matrix
 │
-├── submission.csv           Final submission (generated by rank.py)
-├── validate_submission.py   Format validator (provided by organizers)
-├── submission_metadata.yaml Hackathon metadata — team, compute, methodology summary
-├── requirements.txt         Python dependencies
-└── README.md                This file
+├── validate_submission.py       Format validator provided by challenge organizers
+├── submission.csv               Final ranked output (generated by rank.py)
+├── submission_metadata.yaml     Hackathon metadata: team, compute, methodology summary
+├── requirements.txt             Pinned Python dependencies
+└── README.md                    This file
 ```
 
 ---
@@ -465,7 +553,7 @@ redrob-ranker/
 
 **No cross-encoder reranking.** A cross-encoder re-ranking stage would likely improve NDCG@10 by 3–8% on a real dataset. The expected quality gain on a synthetic templated dataset was lower than on real data, and the model download requirement conflicted with the offline constraint at ranking time.
 
-**Synthetic description templating degrades text signals.** Career description paragraphs are reused verbatim across candidates. Both embedding similarity and TF-IDF partially score template quality rather than genuine career relevance. This is inherent to the dataset.
+**Synthetic description templating degrades text signals.** Career description paragraphs are reused verbatim across candidates in this dataset. Both embedding similarity and TF-IDF partially score template quality rather than genuine career relevance. This is inherent to the dataset and not addressable within the system without ground-truth labels to identify which descriptions are authentic.
 
 **Services company classification coverage.** The curated company list covers known major consulting and IT services firms, supplemented by industry-field checks. Fictional company names in the synthetic dataset are not recognized and default to "product company" classification.
 
@@ -491,7 +579,7 @@ redrob-ranker/
 
 **Precomputed embeddings.** Separating the 80-minute encoding step from the sub-5-minute ranking step is required by the evaluation constraints. In production, a vector index with incremental updates would eliminate this distinction.
 
-**Fixed REFERENCE_DATE.** Honeypot date checks use a hardcoded reference date (`2026-06-14`) rather than `datetime.now()`, ensuring identical results regardless of when the system is evaluated.
+**Fixed `REFERENCE_DATE`.** Honeypot date checks use a hardcoded reference date (`2026-06-14`) rather than `datetime.now()`, ensuring identical results regardless of when the system is evaluated.
 
 **JD-derived weights, not fitted.** With one known positive in the 50-candidate sample, any learned weights would memorize that profile rather than generalize. JD-derived weights are a deliberate choice under zero labeled training data.
 
@@ -504,3 +592,9 @@ This system represents a complete, production-ready approach to zero-label candi
 The Weighted RRF fusion resolves the fundamental scale-incompatibility problem that breaks naive score combination, without requiring labeled data to parameterize. The behavioral multiplier design correctly models the relationship between technical fit and hiring feasibility. The fact-grounded reasoning generation ensures every ranking decision is auditable against the source data.
 
 Every design decision — why embeddings, why TF-IDF, why these weights, why multiplicative rather than additive behavioral adjustment, why rank-based rather than score-based fusion — has a specific, traceable justification in the job description, the dataset properties, or the information retrieval literature.
+
+---
+
+<div align="center">
+<sub>Redrob AI Hackathon · Intelligent Candidate Discovery & Ranking Challenge · vasudha-redrob</sub>
+</div>
