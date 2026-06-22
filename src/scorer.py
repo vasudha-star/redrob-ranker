@@ -13,14 +13,17 @@ REFERENCE_DATE = datetime(2026, 6, 14)
 # Feature weights — must sum to 1.0
 # Retrieval evidence is highest because it is the core JD requirement.
 WEIGHTS = {
-    "retrieval_evidence":   0.35,
-    "product_company":      0.20,
-    "title_domain":         0.15,
-    "skill_credibility":    0.10,
-    "experience_fit":       0.08,
-    "location":             0.07,
-    "education":            0.03,
-    "evaluation_framework": 0.02,
+    "retrieval_evidence":            0.28,
+    "product_company":               0.15,
+    "title_domain":                  0.12,
+    "skill_credibility":             0.09,
+    "company_prestige":              0.08,
+    "skill_description_consistency": 0.05,
+    "experience_fit":                0.07,
+    "evaluation_framework":          0.08,
+    "github_activity":               0.04,
+    "location":                      0.04,
+    "education":                     0.00,
 }
 
 
@@ -61,7 +64,7 @@ def behavioral_multiplier(signals: dict) -> float:
         0.3 * interview_rate
     )
 
-    return max(0.3, min(1.3, composite)) * open_bonus
+    return max(0.6, min(1.2, composite)) * open_bonus
 
 
 def notice_period_multiplier(signals: dict) -> float:
@@ -118,3 +121,4 @@ def score_candidate(candidate: dict) -> tuple[float, dict]:
     final_score = base_score * b_mult * n_mult
 
     return final_score, features
+

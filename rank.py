@@ -1,19 +1,3 @@
-"""
-rank.py — Main entry point for the Redrob candidate ranking system.
-Usage:
-    python rank.py --candidates ./data/candidates.jsonl --out ./submission.csv
-
-Architecture: Hybrid Rules + TF-IDF (Architecture 2)
-Pipeline:
-    1. Load candidates
-    2. TF-IDF score on career descriptions
-    3. Rule-based feature scoring
-    4. Honeypot elimination
-    5. Behavioral multiplier
-    6. Combine into final score
-    7. Output top 100 as CSV
-"""
-
 import json
 import csv
 import time
@@ -23,15 +7,15 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
+
 sys.path.insert(0, ".")
 from src.scorer import score_candidate
 from src.reasoning import generate_reasoning
+from src.embeddings import compute_embedding_scores
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JD QUERY DOCUMENT
-# This is the "ideal candidate" description derived from the JD.
-# TF-IDF compares every candidate's career descriptions against this.
-# We use a curated version — not the raw JD — to emphasize core requirements.
+# Curated ideal candidate description for TF-IDF matching.
 # ─────────────────────────────────────────────────────────────────────────────
 JD_QUERY = """
 Senior AI engineer with production experience building embedding based retrieval
@@ -72,8 +56,6 @@ def compute_tfidf_scores(candidates: list) -> np.ndarray:
     Compute TF-IDF cosine similarity between each candidate's
     career text and the JD query document.
 
-    Returns array of scores (0.0 to 1.0) for each candidate.
-
     Why TF-IDF on descriptions and not skills:
     Skills are self-reported. Descriptions are harder to fake.
     A keyword stuffer adds FAISS to skills but their description
@@ -81,20 +63,17 @@ def compute_tfidf_scores(candidates: list) -> np.ndarray:
     """
     print("  Building career text corpus...")
     corpus = [get_career_text(c) for c in candidates]
-
-    # Add JD query as the last document
     corpus.append(JD_QUERY)
 
     print("  Fitting TF-IDF vectorizer...")
     vectorizer = TfidfVectorizer(
-        max_features=5000,      # Top 5000 terms — balances speed and coverage
-        ngram_range=(1, 2),     # Unigrams + bigrams catches "vector search" etc
-        min_df=2,               # Term must appear in at least 2 docs
-        sublinear_tf=True       # Log normalization — reduces impact of repeated terms
+        max_features=5000,
+        ngram_range=(1, 2),
+        min_df=2,
+        sublinear_tf=True
     )
     tfidf_matrix = vectorizer.fit_transform(corpus)
 
-    # JD vector is the last row
     jd_vector = tfidf_matrix[-1]
     candidate_matrix = tfidf_matrix[:-1]
 
@@ -107,12 +86,10 @@ def load_candidates(filepath: str) -> list:
     """Load candidates from a JSONL file or a JSON array file."""
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read().strip()
-    
-    # JSON array (sample_candidates.json)
+
     if content.startswith("["):
         return json.loads(content)
-    
-    # JSONL format (candidates.jsonl)
+
     candidates = []
     for line in content.splitlines():
         line = line.strip()
@@ -132,19 +109,25 @@ def main():
     total_start = time.time()
 
     # ── Step 1: Load candidates ───────────────────────────────────────────
-    print(f"[1/5] Loading candidates from {args.candidates}...")
+    print(f"[1/6] Loading candidates from {args.candidates}...")
     candidates = load_candidates(args.candidates)
     print(f"      Loaded {len(candidates)} candidates in "
           f"{time.time() - total_start:.1f}s")
 
-    # ── Step 2: TF-IDF scores ─────────────────────────────────────────────
-    print("[2/5] Computing TF-IDF scores...")
+    # ── Step 2: Embedding scores ──────────────────────────────────────────
+    print("[2/6] Computing semantic embedding scores...")
+    t = time.time()
+    embedding_scores = compute_embedding_scores(candidates)
+    print(f"      Done in {time.time() - t:.1f}s")
+
+    # ── Step 3: TF-IDF scores ─────────────────────────────────────────────
+    print("[3/6] Computing TF-IDF scores...")
     t = time.time()
     tfidf_scores = compute_tfidf_scores(candidates)
     print(f"      Done in {time.time() - t:.1f}s")
 
-    # ── Step 3: Rule-based scores ─────────────────────────────────────────
-    print("[3/5] Computing rule-based scores...")
+    # ── Step 4: Rule-based scores ─────────────────────────────────────────
+    print("[4/6] Computing rule-based scores...")
     t = time.time()
     rule_scores = []
     feature_dicts = []
@@ -154,36 +137,74 @@ def main():
         feature_dicts.append(features)
     print(f"      Done in {time.time() - t:.1f}s")
 
-    # ── Step 4: Combine scores ────────────────────────────────────────────
-    print("[4/5] Combining scores...")
-    # TF-IDF weight: 0.35 — career description relevance
-    # Rule weight:   0.65 — structured feature scoring
-    # Why this split: Rules are more reliable on synthetic data
-    # because descriptions are templated. TF-IDF still adds signal
-    # for candidates with rich description text.
-    TFIDF_WEIGHT = 0.35
-    RULE_WEIGHT = 0.65
+# ── Step 5: Weighted Reciprocal Rank Fusion ───────────────────────────
+    print("[5/6] Applying Weighted Reciprocal Rank Fusion...")
+    #
+    # Why weighted RRF over linear interpolation:
+    # Three signals have incompatible score distributions:
+    #   Rule scores:      0.08 – 0.72  (wide, reliable)
+    #   Embedding scores: 0.20 – 0.42  (narrow, partially degraded by templates)
+    #   TF-IDF scores:    0.01 – 0.18  (sparse, lowest magnitude)
+    # Linear combination suppresses TF-IDF to ~2% effective contribution
+    # despite its 15% nominal weight. RRF fixes this via rank-based aggregation.
+    #
+    # Why weighted RRF over equal-weight RRF:
+    # Rule signal directly encodes 7 of 8 JD requirement categories from
+    # structured fields (title, company type, years, location, assessments).
+    # TF-IDF reads the same templated descriptions as embeddings with lower
+    # expressiveness. Equal weights over-represent TF-IDF relative to its
+    # actual predictive value for this JD.
+    #
+    # Weight derivation (JD-derived, not fitted to any proxy data):
+    #   Rule   0.50 — structured JD requirements from reliable fields
+    #   Embed  0.30 — semantic career narrative, partially template-degraded
+    #   TF-IDF 0.20 — keyword retrieval matching, marginal over rules+embeddings
+    #
+    # k=60: standard RRF constant from Cormack et al. 2009. Not tuned.
+    # Equal k across signals — signal reliability is captured by the weights,
+    # not by adjusting the rank decay curve.
+    #
+    RRF_K = 60
+    RULE_W   = 0.50
+    EMBED_W  = 0.30
+    TFIDF_W  = 0.20
 
-    final_scores = []
-    for i, c in enumerate(candidates):
-        rule_score = rule_scores[i]
+    # Exclude honeypots from all three rankings
+    valid_indices = [i for i, r in enumerate(rule_scores) if r > 0.001]
 
-        # Honeypot candidates stay at 0.001 regardless of TF-IDF
-        if rule_score <= 0.001:
-            final_scores.append(0.001)
-            continue
+    # Three independent ranked lists — each purely by its own signal
+    rule_ranking = sorted(
+        valid_indices, key=lambda i: -rule_scores[i]
+    )
+    embedding_ranking = sorted(
+        valid_indices, key=lambda i: -float(embedding_scores[i])
+    )
+    tfidf_ranking = sorted(
+        valid_indices, key=lambda i: -float(tfidf_scores[i])
+    )
 
-        combined = (TFIDF_WEIGHT * tfidf_scores[i] +
-                    RULE_WEIGHT * rule_score)
-        final_scores.append(combined)
+    # Weighted RRF accumulation
+    rrf_scores = {idx: 0.0 for idx in valid_indices}
+    for ranked_list, weight in [
+        (rule_ranking,      RULE_W),
+        (embedding_ranking, EMBED_W),
+        (tfidf_ranking,     TFIDF_W),
+    ]:
+        for rank, idx in enumerate(ranked_list, 1):
+            rrf_scores[idx] += weight / (RRF_K + rank)
 
-    # ── Step 5: Rank and output ───────────────────────────────────────────
-    print("[5/5] Ranking and writing output...")
+    # Final scores — honeypots remain at 0.001
+    final_scores = [0.001] * len(candidates)
+    for idx, score in rrf_scores.items():
+        final_scores[idx] = score
 
-    # Sort by score descending, then by candidate_id ascending for ties
+
+    # ── Step 6: Rank and output ───────────────────────────────────────────
+    print("[6/6] Ranking and writing output...")
+
     ranked = sorted(
         enumerate(candidates),
-        key=lambda x: (-final_scores[x[0]], x[1]["candidate_id"])
+        key=lambda x: (-round(final_scores[x[0]], 6), x[1]["candidate_id"])
     )
 
     top_100 = ranked[:100]
@@ -194,8 +215,11 @@ def main():
 
         for rank, (idx, candidate) in enumerate(top_100, 1):
             score = round(final_scores[idx], 6)
-            reasoning = generate_reasoning(candidate, rank, final_scores[idx],
-                                           feature_dicts[idx])
+            reasoning = generate_reasoning(
+                candidate, rank,
+                final_scores[idx],
+                feature_dicts[idx]
+            )
             writer.writerow([
                 candidate["candidate_id"],
                 rank,
@@ -208,7 +232,8 @@ def main():
     print(f"   Output: {args.out}")
     print(f"   Top candidate: {top_100[0][1]['candidate_id']} "
           f"(score={final_scores[top_100[0][0]]:.4f})")
-    print(f"   Rank {len(top_100)} score: {final_scores[top_100[-1][0]]:.4f}")
+    print(f"   Rank {len(top_100)} score: "
+          f"{final_scores[top_100[-1][0]]:.4f}")
 
 
 if __name__ == "__main__":

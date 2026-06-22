@@ -20,7 +20,8 @@ SERVICES_COMPANIES = {
     "hcl", "tech mahindra", "techmahindra", "mindtree", "mphasis",
     "hexaware", "niit", "patni", "mastech", "syntel", "l&t infotech",
     "ltimindtree", "persistent", "mphasis", "birlasoft", "sonata",
-    "zensar", "cyient", "kpit", "happiest minds", "coforge"
+    "zensar", "cyient", "kpit", "happiest minds", "coforge",
+    "genpact" 
 }
 
 # Titles that are clearly non-technical.
@@ -50,32 +51,29 @@ TECH_TITLES = {
 
 # Keywords in career descriptions that signal retrieval/ranking/search work.
 # These are the core JD requirements.
-RETRIEVAL_KEYWORDS = [
-    # Vector / embedding systems
-    "embedding", "embeddings", "vector search", "dense retrieval",
-    "semantic search", "faiss", "pinecone", "weaviate", "qdrant",
-    "milvus", "opensearch", "elasticsearch", "solr",
-    "sentence transformer", "sentence-transformer", "bi-encoder",
-    "cross-encoder", "ann", "approximate nearest neighbor",
-    # Ranking systems
-    "ranking", "ranker", "learning to rank", "learning-to-rank",
-    "ltr", "xgboost rank", "lightgbm rank", "pointwise", "pairwise",
-    "listwise", "ndcg", "mrr", "map@", "mean average precision",
-    # Recommendation systems
-    "recommendation", "recommender", "collaborative filtering",
-    "content-based filtering", "matrix factorization",
-    # Search infrastructure
-    "retrieval", "information retrieval", "hybrid search",
-    "bm25", "tf-idf", "tfidf", "inverted index", "query expansion",
-    "reranking", "re-ranking", "query understanding",
-    # Evaluation
-    "a/b test", "a/b testing", "offline evaluation", "online evaluation",
-    "relevance judgment", "click-through", "engagement metric",
-    "recall@", "precision@", "offline-online",
-    # LLM / modern AI (secondary)
-    "rag", "retrieval augmented", "langchain", "llm", "fine-tuning",
-    "fine-tune", "lora", "qlora", "peft", "hugging face",
-    "transformer", "bert", "gpt"
+# Tier 1 — hard retrieval signals, unambiguous
+RETRIEVAL_KEYWORDS_TIER1 = [
+    "faiss", "pinecone", "weaviate", "qdrant", "milvus",
+    "opensearch", "elasticsearch", "vector search", "dense retrieval",
+    "semantic search", "hybrid search", "bm25", "inverted index",
+    "learning to rank", "learning-to-rank", "ltr", "ndcg", "mrr",
+    "mean average precision", "information retrieval",
+    "sentence transformer", "bi-encoder", "cross-encoder",
+    "approximate nearest neighbor", "reranking", "re-ranking",
+    "recommendation system", "recommender system",
+    "collaborative filtering", "matrix factorization",
+    "query expansion", "query understanding",
+    "a/b test", "offline evaluation", "online evaluation",
+    "relevance judgment", "click-through rate", "solr",
+    "recall@", "precision@", "offline-online"
+]
+
+# Tier 2 — soft signals, present in retrieval work but not exclusive
+RETRIEVAL_KEYWORDS_TIER2 = [
+    "embedding", "embeddings", "transformer", "bert",
+    "hugging face", "fine-tuning", "fine-tune", "lora", "peft",
+    "llm", "gpt", "rag", "langchain", "ranking", "retrieval",
+    "feature engineering", "mlflow", "mlops"
 ]
 
 # Keywords for evaluation framework experience specifically.
@@ -86,7 +84,25 @@ EVALUATION_KEYWORDS = [
     "recall@", "precision@", "click-through rate", "ctr",
     "engagement metric", "offline-online correlation"
 ]
+# Tier 1 product companies — highest signal
+# These companies are known for strong ML/AI engineering culture
+PRESTIGE_COMPANIES_TIER1 = {
+    "google", "microsoft", "meta", "apple", "amazon", "netflix",
+    "uber", "airbnb", "linkedin", "twitter", "stripe", "openai",
+    "anthropic", "deepmind", "nvidia", "salesforce"
+}
 
+# Tier 2 — strong Indian product companies
+PRESTIGE_COMPANIES_TIER2 = {
+    "flipkart", "swiggy", "zomato", "razorpay", "paytm", "ola",
+    "cred", "meesho", "phonepe", "freshworks", "zerodha", "groww",
+    "nykaa", "bigbasket", "dunzo", "urban company", "sharechat",
+    "dream11", "unacademy", "byju", "upgrad", "lenskart",
+    "policybazaar", "cars24", "spinny", "sarvam", "krutrim",
+    "mad street den", "aganitha", "rephrase", "niramai"
+}
+# GitHub activity threshold — candidates with real engineering activity
+GITHUB_ACTIVE_THRESHOLD = 30.0
 # India locations preferred by JD.
 PREFERRED_LOCATIONS = {
     "hyderabad", "pune", "noida", "bangalore", "bengaluru",
@@ -98,6 +114,47 @@ PREFERRED_LOCATIONS = {
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
+def company_prestige_score(candidate: dict) -> float:
+    """
+    Score based on prestige of companies in career history,
+    weighted by time spent — 1 month at Google should not score
+    the same as 5 years at Google.
+
+    Why duration-weighted:
+    A candidate who interned at Google for 1 month a decade ago
+    should not score identically to a current Google Staff Engineer.
+    Weighting by duration reflects actual depth of experience.
+    """
+    history = candidate.get("career_history", [])
+    if not history:
+        return 0.3
+
+    total_months = sum(job.get("duration_months", 0) for job in history)
+    if total_months == 0:
+        return 0.3
+
+    weighted_score = 0.0
+    for job in history:
+        company = job.get("company", "").lower()
+        duration = job.get("duration_months", 0)
+        weight = duration / total_months
+
+        company_score = 0.3  # default for unknown companies
+        for t1 in PRESTIGE_COMPANIES_TIER1:
+            if t1 in company:
+                company_score = 1.0
+                break
+        else:
+            for t2 in PRESTIGE_COMPANIES_TIER2:
+                if t2 in company:
+                    company_score = 0.7
+                    break
+
+        weighted_score += company_score * weight
+
+    # Normalize: a career entirely at Tier-1 companies = 1.0
+    # a career entirely at unknown companies = 0.3
+    return min(1.0, weighted_score / 0.5)
 
 def _normalize(text: str) -> str:
     """Lowercase and strip a string for consistent comparison."""
@@ -177,19 +234,21 @@ def title_domain_score(candidate: dict) -> float:
 # FEATURE 2: PRODUCT COMPANY SCORE
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Industry keywords that indicate a services/consulting company,
+# used as a backup check when the company name isn't on our list
+SERVICES_INDUSTRY_KEYWORDS = {
+    "it services", "consulting", "bpo", "outsourcing", "staffing"
+}
+
+
+def _is_services_by_industry(industry: str) -> bool:
+    """Catches services companies not on our name list, using the
+    industry field that's already in every job entry."""
+    industry_lower = industry.lower()
+    return any(kw in industry_lower for kw in SERVICES_INDUSTRY_KEYWORDS)
+
+
 def product_company_score(candidate: dict) -> float:
-    """
-    Score based on what fraction of career was at product companies.
-    
-    Why this matters: JD explicitly disqualifies people whose entire
-    career is at TCS/Infosys/Wipro etc. Product company experience
-    is a strong signal of real engineering ownership.
-    
-    Score breakdown:
-    - 100% product company career → 1.0
-    - Mixed career → proportional
-    - 100% services career → 0.1 (not 0.0, skills may still exist)
-    """
     history = candidate.get("career_history", [])
     if not history:
         return 0.3
@@ -200,18 +259,18 @@ def product_company_score(candidate: dict) -> float:
     for job in history:
         duration = job.get("duration_months", 0)
         company = job.get("company", "")
+        industry = job.get("industry", "")
         total_months += duration
-        if not _is_services_company(company):
+
+        is_services = _is_services_company(company) or _is_services_by_industry(industry)
+        if not is_services:
             product_months += duration
 
     if total_months == 0:
         return 0.3
 
     ratio = product_months / total_months
-
-    # Apply a floor so pure-services candidates aren't completely zeroed
     return max(0.1, ratio)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FEATURE 3: RETRIEVAL EVIDENCE SCORE
@@ -220,38 +279,25 @@ def product_company_score(candidate: dict) -> float:
 def retrieval_evidence_score(candidate: dict) -> float:
     """
     Score based on retrieval/ranking/search keywords in career descriptions.
-    
-    Why this matters: This is the CORE JD requirement. We look at career
-    descriptions (not skills list) because descriptions are harder to fake.
-    A keyword stuffer can add FAISS to their skills, but if their
-    descriptions talk about customer support management, the score stays low.
-    
-    Why descriptions and not skills:
-    Skills are self-reported. Descriptions describe what you actually did.
-    
-    Scoring:
-    - Count unique retrieval keyword matches in weighted descriptions
-    - Normalize to 0.0-1.0 by dividing by a reasonable max (15 keywords)
-    - Cap at 1.0
+
+    Why tiered keywords:
+    Tier 1 = unambiguous retrieval signals (FAISS, BM25, NDCG)
+    Tier 2 = general ML signals (transformer, LLM, RAG)
+    A candidate who used GPT for content generation should not score
+    the same as one who built a FAISS index in production.
+
+    Tier 1 keywords worth 2x Tier 2.
+    Normalize: 20 weighted points = 1.0
     """
     text = _get_all_descriptions(candidate)
-
-    matched = set()
-    for kw in RETRIEVAL_KEYWORDS:
-        if kw in text:
-            matched.add(kw)
-
-    # Also check summary — gives some weight to candidate's own framing
     summary = candidate["profile"].get("summary", "").lower()
-    for kw in RETRIEVAL_KEYWORDS:
-        if kw in summary:
-            matched.add(kw)
+    combined = text + " " + summary
 
-    # Normalize: 15+ keyword matches → score of 1.0
-    # This threshold means a candidate needs substantial retrieval
-    # language in their history to score highly
-    score = min(1.0, len(matched) / 15.0)
-    return score
+    tier1_matches = sum(1 for kw in RETRIEVAL_KEYWORDS_TIER1 if kw in combined)
+    tier2_matches = sum(1 for kw in RETRIEVAL_KEYWORDS_TIER2 if kw in combined)
+
+    weighted = (tier1_matches * 2) + (tier2_matches * 1)
+    return min(1.0, weighted / 20.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -260,29 +306,15 @@ def retrieval_evidence_score(candidate: dict) -> float:
 
 def evaluation_framework_score(candidate: dict) -> float:
     """
-    Score based on evaluation framework keywords in career descriptions.
-    
-    Why this matters: JD says 'if you've never thought about how to evaluate
-    a ranking system rigorously, this role will be very painful.'
-    Evaluation experience is a HARD requirement, so we score it separately.
-    
-    Scoring:
-    - 3+ evaluation keywords → 1.0
-    - 1-2 → partial credit
-    - 0 → 0.0
+    Score based on evaluation framework keywords.
+    Uses Tier 1 keywords only — evaluation signals are hard signals.
     """
     text = _get_all_descriptions(candidate)
     summary = candidate["profile"].get("summary", "").lower()
     combined = text + " " + summary
 
-    matched = set()
-    for kw in EVALUATION_KEYWORDS:
-        if kw in combined:
-            matched.add(kw)
-
-    # 3+ matches → full score
-    return min(1.0, len(matched) / 3.0)
-
+    matched = sum(1 for kw in EVALUATION_KEYWORDS if kw in combined)
+    return min(1.0, matched / 3.0)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FEATURE 5: EXPERIENCE FIT SCORE
@@ -463,25 +495,88 @@ def education_score(candidate: dict) -> float:
 
     return best
 
+def skill_description_consistency_score(candidate: dict) -> float:
+    """
+    Checks if skills claimed actually appear in career descriptions.
+    
+    Why this matters:
+    A keyword stuffer adds FAISS, Pinecone, and vector search to their
+    skills list. But if their career descriptions never mention these,
+    the claims are unverified. This catches sophisticated stuffers that
+    TF-IDF and embeddings might miss.
+    
+    Method:
+    For each high-proficiency relevant skill, check if any form of
+    that skill name appears in career descriptions.
+    Ratio of verified to claimed = consistency score.
+    """
+    skills = candidate.get("skills", [])
+    descriptions = _get_all_descriptions(candidate)
 
+    # Only check advanced/expert skills — these are the claims worth verifying
+    high_claims = [
+        s for s in skills
+        if s.get("proficiency") in ["advanced", "expert"]
+        and s.get("duration_months", 0) > 6
+    ]
+
+    if not high_claims:
+        return 0.5  # No strong claims = neutral, not penalized
+
+    verified = 0
+    for skill in high_claims:
+        skill_name = skill["name"].lower()
+        # Check if skill name or any part of it appears in descriptions
+        parts = skill_name.split()
+        if any(part in descriptions for part in parts if len(part) > 3):
+            verified += 1
+
+    return verified / len(high_claims)
 # ─────────────────────────────────────────────────────────────────────────────
 # MASTER FEATURE EXTRACTOR
 # ─────────────────────────────────────────────────────────────────────────────
+def github_activity_score(candidate: dict) -> float:
+    """
+    Score based on GitHub activity.
 
-def extract_features(candidate: dict) -> dict:
+    Why this matters:
+    GitHub activity is one of the few independently verifiable signals
+    in the dataset. A candidate with real commits, PRs, and stars is
+    demonstrably building things — not just listing skills.
+
+    Score breakdown:
+    - -1 means no GitHub linked → neutral (not penalized, not rewarded)
+    - 0-30 → low activity → small penalty
+    - 30-70 → moderate activity → moderate score
+    - 70+ → high activity → full score
+
+    Why not make this high-weight:
+    Junior developers can have high GitHub scores too.
+    This is a credibility signal, not a domain signal.
     """
-    Run all feature functions on a candidate and return a dictionary
-    of feature name → score.
+    score = candidate["redrob_signals"].get("github_activity_score", -1)
+
+    if score < 0:
+        return 0.4  # No GitHub linked — neutral
+
+    if score >= 70:
+        return 1.0
+    elif score >= 30:
+        return 0.6 + 0.4 * ((score - 30) / 40)
+    else:
+        return 0.3 + 0.3 * (score / 30)
     
-    This is the single function called by the scorer.
-    """
+def extract_features(candidate: dict) -> dict:
     return {
-        "title_domain":         title_domain_score(candidate),
-        "product_company":      product_company_score(candidate),
-        "retrieval_evidence":   retrieval_evidence_score(candidate),
-        "evaluation_framework": evaluation_framework_score(candidate),
-        "experience_fit":       experience_fit_score(candidate),
-        "location":             location_score(candidate),
-        "skill_credibility":    skill_credibility_score(candidate),
-        "education":            education_score(candidate),
+        "title_domain":                  title_domain_score(candidate),
+        "product_company":               product_company_score(candidate),
+        "retrieval_evidence":            retrieval_evidence_score(candidate),
+        "evaluation_framework":          evaluation_framework_score(candidate),
+        "experience_fit":                experience_fit_score(candidate),
+        "location":                      location_score(candidate),
+        "skill_credibility":             skill_credibility_score(candidate),
+        "education":                     education_score(candidate),
+        "skill_description_consistency": skill_description_consistency_score(candidate),
+        "company_prestige":              company_prestige_score(candidate),
+        "github_activity":               github_activity_score(candidate),
     }
